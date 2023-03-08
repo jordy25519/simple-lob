@@ -1,5 +1,4 @@
 #![feature(test)]
-
 use std::cmp::Ordering;
 use std::collections::VecDeque;
 
@@ -22,11 +21,11 @@ pub enum OrderSide {
 
 #[derive(Debug, PartialEq)]
 pub struct Fill {
-    pub trader: String,
-    pub counter_party: String,
+    pub side: OrderSide,
     pub amount: u32,
     pub price: f32,
-    pub side: OrderSide,
+    pub trader: String,
+    pub counter_party: String,
 }
 
 impl Fill {
@@ -50,11 +49,11 @@ impl Fill {
 /// Note: field declaration order is important for derived sort implementation
 #[derive(PartialEq, PartialOrd, Clone, Debug)]
 struct LimitOrder {
-    price: f32,
+    side: OrderSide,
     nonce: u64,
     amount: u32,
+    price: f32,
     trader: String,
-    side: OrderSide,
 }
 
 impl LimitOrder {
@@ -153,7 +152,7 @@ impl OrderBook {
 
         // Remove filled orders from the book
         if remove_count > 0 {
-            self.0 = self.0.split_off(remove_count);
+            let _ = self.0.drain(0..remove_count);
         }
 
         if order.amount > 0 {
@@ -217,10 +216,10 @@ impl LOB for Market {
 
 #[cfg(test)]
 mod tests {
-    extern crate test;
-    use std::hint::black_box;
-
     use crate::{LimitOrder, Market, OrderSide, LOB};
+    use std::{hint::black_box, time::Duration};
+
+    extern crate test;
     use test::Bencher;
 
     #[test]
@@ -279,12 +278,27 @@ mod tests {
 
     fn bench_1() {
         let mut lob = Market::default();
-        for i in 10_000_u32..=5 {
+        for i in 1..=100_000_u32 {
             black_box(lob.submit_order(&format!("bob: {}", i), 1, 1.0_f32, OrderSide::Sell));
         }
-        for i in 10_000_u32..=5 {
+        for i in 1..=100_000_u32 {
             black_box(lob.submit_order(&format!("charlie: {}", i), 1, 1.0_f32, OrderSide::Buy));
         }
+    }
+
+    #[test]
+    fn bench_1_t() {
+        use std::time::Instant;
+        let mut diffs = vec![];
+        for i in 0..100 {
+            let s_0 = Instant::now();
+            black_box(bench_1());
+            let s_1 = Instant::now();
+            diffs.push(s_1 - s_0);
+        }
+        let s_m: Duration = diffs.iter().sum();
+        println!("{:?}", s_m / diffs.len() as u32);
+        assert!(false);
     }
 
     #[bench]
@@ -294,14 +308,15 @@ mod tests {
 
     fn bench_2() {
         use rand::Rng;
+
         let mut lob = Market::default();
-        for i in 100_000_u32..=5 {
-            let price_r = rand::thread_rng().gen_range(1..1_000_000);
+        for i in 1_u32..=100_000 {
+            let price_r = rand::thread_rng().gen_range(1..10_000);
             black_box(lob.submit_order(&format!("bob: {}", i), 1, price_r as f32, OrderSide::Sell));
         }
 
-        for i in 100_000_u32..=5 {
-            let price_r = rand::thread_rng().gen_range(1..1_000_000);
+        for i in 1_u32..=100_000 {
+            let price_r = rand::thread_rng().gen_range(1..10_000);
             black_box(lob.submit_order(
                 &format!("charlie: {}", i),
                 1,
@@ -309,5 +324,20 @@ mod tests {
                 OrderSide::Buy,
             ));
         }
+    }
+
+    #[test]
+    fn bench_2_t() {
+        use std::time::Instant;
+        let mut diffs = vec![];
+        for i in 0..100 {
+            let s_0 = Instant::now();
+            black_box(bench_2());
+            let s_1 = Instant::now();
+            diffs.push(s_1 - s_0);
+        }
+        let s_m: Duration = diffs.iter().sum();
+        println!("{:?}", s_m / diffs.len() as u32);
+        assert!(false);
     }
 }
