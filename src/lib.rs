@@ -1,8 +1,9 @@
-#![feature(test)]
-use std::cmp::Ordering;
-use std::collections::VecDeque;
+//! Simple limit order book
 
-trait LOB {
+use std::{cmp::Ordering, collections::VecDeque};
+
+/// Provides a limit order book API
+pub trait LOB {
     type Error;
     fn submit_order(
         &mut self,
@@ -19,6 +20,7 @@ pub enum OrderSide {
     Sell,
 }
 
+// An event denoting a matched order
 #[derive(Debug, PartialEq)]
 pub struct Fill {
     pub side: OrderSide,
@@ -43,10 +45,11 @@ impl Fill {
 /// Note: field declaration order is important for derived sort implementation
 #[derive(PartialEq, PartialOrd, Clone, Debug)]
 struct LimitOrder {
-    side: OrderSide,
-    nonce: u64,
-    amount: u32,
     price: f32,
+    nonce: u64,
+    // TODO: this could be handled by the type system or inferred
+    side: OrderSide,
+    amount: u32,
     trader_id: u32,
 }
 
@@ -158,7 +161,7 @@ impl OrderBook {
 }
 
 #[derive(Default)]
-struct Market {
+pub struct Market {
     /// Order nonce
     nonce: u64,
     buys: OrderBook,
@@ -209,12 +212,63 @@ impl LOB for Market {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use crate::{LimitOrder, Market, OrderSide, LOB};
-    use std::{hint::black_box, time::Duration};
 
-    extern crate test;
-    use test::Bencher;
+    #[test]
+    fn orders_sort_by_price_then_nonce() {
+        let mut orders = vec![
+            LimitOrder {
+                trader_id: 1,
+                nonce: 2,
+                price: 2.0,
+                amount: 1,
+                side: OrderSide::Buy,
+            },
+            LimitOrder {
+                trader_id: 1,
+                nonce: 1,
+                price: 2.0,
+                amount: 1,
+                side: OrderSide::Buy,
+            },
+            LimitOrder {
+                trader_id: 1,
+                nonce: 3,
+                price: 1.0,
+                amount: 1,
+                side: OrderSide::Buy,
+            },
+        ];
+        orders.sort();
+
+        assert_eq!(
+            orders.as_slice(),
+            &[
+                LimitOrder {
+                    trader_id: 1,
+                    nonce: 3,
+                    price: 1.0,
+                    amount: 1,
+                    side: OrderSide::Buy,
+                },
+                LimitOrder {
+                    trader_id: 1,
+                    nonce: 1,
+                    price: 2.0,
+                    amount: 1,
+                    side: OrderSide::Buy,
+                },
+                LimitOrder {
+                    trader_id: 1,
+                    nonce: 2,
+                    price: 2.0,
+                    amount: 1,
+                    side: OrderSide::Buy,
+                },
+            ]
+        );
+    }
 
     #[test]
     fn add_resting_buys() {
@@ -226,14 +280,22 @@ mod tests {
                 Ok(vec![]),
             );
         }
-
-        let fills = lob.submit_order(5_u32, 150, 1_f32 * 1.0_f32, OrderSide::Sell);
-        println!("{:?}", fills);
-        let fills = lob.submit_order(5_u32, 1_350, 1_f32 * 1.0_f32, OrderSide::Sell);
-        println!("{:?}", fills);
-
         println!("{:?}", lob.buys);
-        println!("{:?}", lob.sells);
+
+        let _fills = lob.submit_order(5_u32, 150, 1_f32 * 1.0_f32, OrderSide::Sell);
+        let _fills = lob.submit_order(5_u32, 1_450, 1_f32 * 1.0_f32, OrderSide::Sell);
+
+        assert!(lob.buys.is_empty());
+        assert_eq!(
+            lob.sells.front(),
+            Some(&LimitOrder {
+                trader_id: 5_u32,
+                price: 1_f32,
+                amount: 100,
+                nonce: 6,
+                side: OrderSide::Sell,
+            })
+        );
     }
 
     #[test]
@@ -246,13 +308,10 @@ mod tests {
                 Ok(vec![]),
             );
         }
-
         let charlie_id = 5_u32;
 
-        let fills = lob.submit_order(charlie_id, 150, 5_f32 * 1.0_f32, OrderSide::Buy);
-        println!("{:?}", fills);
-        let fills = lob.submit_order(charlie_id, 1_450, 5_f32 * 1.0_f32, OrderSide::Buy);
-        println!("{:?}", fills);
+        let _fills = lob.submit_order(charlie_id, 150, 5_f32 * 1.0_f32, OrderSide::Buy);
+        let _fills = lob.submit_order(charlie_id, 1_450, 5_f32 * 1.0_f32, OrderSide::Buy);
 
         assert!(lob.sells.is_empty());
         assert_eq!(
@@ -267,76 +326,51 @@ mod tests {
         );
     }
 
-    #[bench]
-    fn bench_market_orders(b: &mut Bencher) {
-        b.iter(|| black_box(bench_1()));
-    }
-
-    fn bench_1() {
+    #[test]
+    fn unfilled_buy() {
         let mut lob = Market::default();
-        for i in 1..=100_000_u32 {
-            black_box(assert!(lob
-                .submit_order(i, 1, 1.0_f32, OrderSide::Sell)
-                .is_ok()));
-        }
-        for i in 1..=100_000_u32 {
-            black_box(assert!(lob
-                .submit_order(i, 1, 1.0_f32, OrderSide::Buy)
-                .is_ok()));
-        }
+
+        assert_eq!(
+            lob.submit_order(1, 100, 5.0_f32, OrderSide::Sell),
+            Ok(vec![]),
+        );
+
+        let fills = lob.submit_order(2, 100, 4.0, OrderSide::Buy).unwrap();
+        assert!(fills.is_empty());
+
+        assert_eq!(
+            lob.buys.front(),
+            Some(&LimitOrder {
+                trader_id: 2,
+                price: 4.0,
+                amount: 100,
+                nonce: 1,
+                side: OrderSide::Buy,
+            })
+        );
     }
 
     #[test]
-    fn bench_1_t() {
-        use std::time::Instant;
-        let mut diffs = vec![];
-        for _ in 0..100 {
-            let s_0 = Instant::now();
-            black_box(bench_1());
-            let s_1 = Instant::now();
-            diffs.push(s_1 - s_0);
-        }
-        let s_m: Duration = diffs.iter().sum();
-        println!("{:?}", s_m / diffs.len() as u32);
-        assert!(false);
-    }
-
-    #[bench]
-    fn bench_random_orders(b: &mut Bencher) {
-        b.iter(|| black_box(bench_2()));
-    }
-
-    fn bench_2() {
-        use rand::Rng;
-
+    fn unfilled_sell() {
         let mut lob = Market::default();
-        for i in 1_u32..=100_000 {
-            let price_r = rand::thread_rng().gen_range(1..10_000);
-            black_box(assert!(lob
-                .submit_order(i, 1, price_r as f32, OrderSide::Sell)
-                .is_ok()));
-        }
 
-        for i in 1_u32..=100_000 {
-            let price_r = rand::thread_rng().gen_range(1..10_000);
-            black_box(assert!(lob
-                .submit_order(i, 1, price_r as f32, OrderSide::Buy)
-                .is_ok()));
-        }
-    }
+        assert_eq!(
+            lob.submit_order(1, 100, 4.0_f32, OrderSide::Buy),
+            Ok(vec![]),
+        );
 
-    #[test]
-    fn bench_2_t() {
-        use std::time::Instant;
-        let mut diffs = vec![];
-        for _ in 0..100 {
-            let s_0 = Instant::now();
-            black_box(bench_2());
-            let s_1 = Instant::now();
-            diffs.push(s_1 - s_0);
-        }
-        let s_m: Duration = diffs.iter().sum();
-        println!("{:?}", s_m / diffs.len() as u32);
-        assert!(false);
+        let fills = lob.submit_order(2, 100, 5.0, OrderSide::Sell).unwrap();
+        assert!(fills.is_empty());
+
+        assert_eq!(
+            lob.sells.front(),
+            Some(&LimitOrder {
+                trader_id: 2,
+                price: 5.0,
+                amount: 100,
+                nonce: 1,
+                side: OrderSide::Sell,
+            })
+        );
     }
 }
