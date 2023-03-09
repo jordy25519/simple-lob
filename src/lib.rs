@@ -43,11 +43,12 @@ impl Fill {
 }
 
 /// Note: field declaration order is important for derived sort implementation
-#[derive(PartialEq, PartialOrd, Clone, Debug)]
+#[derive(PartialEq, Clone, Debug)]
 struct LimitOrder {
     price: f32,
     nonce: u64,
     // TODO: this could be handled by the type system or inferred
+    // TODO: the sorting is reversed for each side of the book
     side: OrderSide,
     amount: u32,
     trader_id: u32,
@@ -92,6 +93,22 @@ impl LimitOrder {
                 self.trader_id,
             ),
         ))
+    }
+}
+
+impl PartialOrd for LimitOrder {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        match self.price.total_cmp(&other.price) {
+            Ordering::Equal => self.nonce.partial_cmp(&other.nonce),
+            Ordering::Greater => match self.side {
+                OrderSide::Buy => Some(Ordering::Less),
+                OrderSide::Sell => Some(Ordering::Greater),
+            },
+            Ordering::Less => match self.side {
+                OrderSide::Buy => Some(Ordering::Greater),
+                OrderSide::Sell => Some(Ordering::Less),
+            },
+        }
     }
 }
 
@@ -213,7 +230,7 @@ impl LOB for Market {
 
 #[cfg(test)]
 pub mod tests {
-    use crate::{LimitOrder, Market, OrderSide, LOB};
+    use crate::{Fill, LimitOrder, Market, OrderSide, LOB};
 
     #[test]
     fn orders_sort_by_price_then_nonce() {
@@ -247,13 +264,6 @@ pub mod tests {
             &[
                 LimitOrder {
                     trader_id: 1,
-                    nonce: 3,
-                    price: 1.0,
-                    amount: 1,
-                    side: OrderSide::Buy,
-                },
-                LimitOrder {
-                    trader_id: 1,
                     nonce: 1,
                     price: 2.0,
                     amount: 1,
@@ -265,6 +275,64 @@ pub mod tests {
                     price: 2.0,
                     amount: 1,
                     side: OrderSide::Buy,
+                },
+                LimitOrder {
+                    trader_id: 1,
+                    nonce: 3,
+                    price: 1.0,
+                    amount: 1,
+                    side: OrderSide::Buy,
+                },
+            ]
+        );
+
+        orders = vec![
+            LimitOrder {
+                trader_id: 1,
+                nonce: 2,
+                price: 2.0,
+                amount: 1,
+                side: OrderSide::Sell,
+            },
+            LimitOrder {
+                trader_id: 1,
+                nonce: 1,
+                price: 2.0,
+                amount: 1,
+                side: OrderSide::Sell,
+            },
+            LimitOrder {
+                trader_id: 1,
+                nonce: 3,
+                price: 1.0,
+                amount: 1,
+                side: OrderSide::Sell,
+            },
+        ];
+        orders.sort();
+        assert_eq!(
+            orders.as_slice(),
+            &[
+                LimitOrder {
+                    trader_id: 1,
+                    nonce: 3,
+                    price: 1.0,
+                    amount: 1,
+                    side: OrderSide::Sell,
+                },
+                LimitOrder {
+                    trader_id: 1,
+                    nonce: 1,
+                    price: 2.0,
+                    amount: 1,
+                    side: OrderSide::Sell,
+                },
+                LimitOrder {
+                    trader_id: 1,
+                    nonce: 2,
+                    price: 2.0,
+                    amount: 1,
+                    side: OrderSide::Sell,
                 },
             ]
         );
@@ -280,16 +348,27 @@ pub mod tests {
                 Ok(vec![]),
             );
         }
-        println!("{:?}", lob.buys);
 
-        let _fills = lob.submit_order(5_u32, 150, 1_f32 * 1.0_f32, OrderSide::Sell);
-        let _fills = lob.submit_order(5_u32, 1_450, 1_f32 * 1.0_f32, OrderSide::Sell);
+        let seller_id = 6_u32;
+        let fills = lob
+            .submit_order(seller_id, 550, 1.0_f32, OrderSide::Sell)
+            .unwrap();
+        assert_eq!(
+            fills.as_slice(),
+            &[
+                Fill::new(500, 5.0, OrderSide::Buy, 5, seller_id,),
+                Fill::new(500, 5.0, OrderSide::Sell, seller_id, 5,),
+                Fill::new(50, 4.0, OrderSide::Buy, 4, seller_id,),
+                Fill::new(50, 4.0, OrderSide::Sell, seller_id, 4,),
+            ]
+        );
+        let _fills = lob.submit_order(seller_id, 1050, 1_f32 * 1.0_f32, OrderSide::Sell);
 
         assert!(lob.buys.is_empty());
         assert_eq!(
             lob.sells.front(),
             Some(&LimitOrder {
-                trader_id: 5_u32,
+                trader_id: seller_id,
                 price: 1_f32,
                 amount: 100,
                 nonce: 6,
@@ -308,16 +387,28 @@ pub mod tests {
                 Ok(vec![]),
             );
         }
-        let charlie_id = 5_u32;
+        let buyer_id = 5_u32;
 
-        let _fills = lob.submit_order(charlie_id, 150, 5_f32 * 1.0_f32, OrderSide::Buy);
-        let _fills = lob.submit_order(charlie_id, 1_450, 5_f32 * 1.0_f32, OrderSide::Buy);
+        let fills = lob
+            .submit_order(buyer_id, 150, 5.0, OrderSide::Buy)
+            .unwrap();
+        assert_eq!(
+            fills.as_slice(),
+            &[
+                Fill::new(100, 1.0, OrderSide::Sell, 1, buyer_id,),
+                Fill::new(100, 1.0, OrderSide::Buy, buyer_id, 1),
+                Fill::new(50, 2.0, OrderSide::Sell, 2, buyer_id,),
+                Fill::new(50, 2.0, OrderSide::Buy, buyer_id, 2),
+            ]
+        );
+
+        let _fills = lob.submit_order(buyer_id, 1_450, 5.0, OrderSide::Buy);
 
         assert!(lob.sells.is_empty());
         assert_eq!(
             lob.buys.front(),
             Some(&LimitOrder {
-                trader_id: charlie_id,
+                trader_id: buyer_id,
                 price: 5_f32,
                 amount: 100,
                 nonce: 6,
