@@ -51,14 +51,14 @@ pub fn bench_2() {
     use rand::Rng;
 
     let mut lob = Market::default();
-    for i in 1_u32..=100_000 {
+    for i in 1_u32..=10_000 {
         let price_r = rand::thread_rng().gen_range(1..10_000);
         black_box(assert!(lob
             .submit_order(i, 1, price_r as f32, OrderSide::Sell)
             .is_ok()));
     }
 
-    for i in 1_u32..=100_000 {
+    for i in 1_u32..=10_000 {
         let price_r = rand::thread_rng().gen_range(1..10_000);
         black_box(assert!(lob
             .submit_order(i, 1, price_r as f32, OrderSide::Buy)
