@@ -6,7 +6,7 @@ trait LOB {
     type Error;
     fn submit_order(
         &mut self,
-        trader: &str,
+        trader_id: u32,
         amount: u32,
         price: f32,
         side: OrderSide,
@@ -24,18 +24,12 @@ pub struct Fill {
     pub side: OrderSide,
     pub amount: u32,
     pub price: f32,
-    pub trader: String,
-    pub counter_party: String,
+    pub trader: u32,
+    pub counter_party: u32,
 }
 
 impl Fill {
-    pub fn new(
-        amount: u32,
-        price: f32,
-        side: OrderSide,
-        trader: String,
-        counter_party: String,
-    ) -> Self {
+    pub fn new(amount: u32, price: f32, side: OrderSide, trader: u32, counter_party: u32) -> Self {
         Fill {
             amount,
             price,
@@ -53,7 +47,7 @@ struct LimitOrder {
     nonce: u64,
     amount: u32,
     price: f32,
-    trader: String,
+    trader_id: u32,
 }
 
 impl LimitOrder {
@@ -84,15 +78,15 @@ impl LimitOrder {
                 fill_amount,
                 self.price,
                 self.side.clone(),
-                self.trader.clone(),
-                other.trader.clone(),
+                self.trader_id,
+                other.trader_id,
             ),
             Fill::new(
                 fill_amount,
                 self.price,
                 other.side.clone(),
-                other.trader.clone(),
-                self.trader.clone(),
+                other.trader_id,
+                self.trader_id,
             ),
         ))
     }
@@ -175,7 +169,7 @@ impl LOB for Market {
     type Error = ();
     fn submit_order(
         &mut self,
-        trader: &str,
+        trader_id: u32,
         amount: u32,
         price: f32,
         side: OrderSide,
@@ -183,7 +177,7 @@ impl LOB for Market {
         let mut order = LimitOrder {
             price,
             amount,
-            trader: trader.to_string(),
+            trader_id,
             side: side.clone(),
             nonce: self.nonce,
         };
@@ -228,14 +222,14 @@ mod tests {
 
         for i in 1_u32..=5 {
             assert_eq!(
-                lob.submit_order("bob", 100 * i, i as f32 * 1.0_f32, OrderSide::Buy),
+                lob.submit_order(i, 100 * i, i as f32 * 1.0_f32, OrderSide::Buy),
                 Ok(vec![]),
             );
         }
 
-        let fills = lob.submit_order("charlie", 150, 1_f32 * 1.0_f32, OrderSide::Sell);
+        let fills = lob.submit_order(5_u32, 150, 1_f32 * 1.0_f32, OrderSide::Sell);
         println!("{:?}", fills);
-        let fills = lob.submit_order("charlie", 1_350, 1_f32 * 1.0_f32, OrderSide::Sell);
+        let fills = lob.submit_order(5_u32, 1_350, 1_f32 * 1.0_f32, OrderSide::Sell);
         println!("{:?}", fills);
 
         println!("{:?}", lob.buys);
@@ -248,21 +242,23 @@ mod tests {
 
         for i in 1_u32..=5 {
             assert_eq!(
-                lob.submit_order("bob", 100 * i, i as f32 * 1.0_f32, OrderSide::Sell),
+                lob.submit_order(i, 100 * i, i as f32 * 1.0_f32, OrderSide::Sell),
                 Ok(vec![]),
             );
         }
 
-        let fills = lob.submit_order("charlie", 150, 5_f32 * 1.0_f32, OrderSide::Buy);
+        let charlie_id = 5_u32;
+
+        let fills = lob.submit_order(charlie_id, 150, 5_f32 * 1.0_f32, OrderSide::Buy);
         println!("{:?}", fills);
-        let fills = lob.submit_order("charlie", 1_450, 5_f32 * 1.0_f32, OrderSide::Buy);
+        let fills = lob.submit_order(charlie_id, 1_450, 5_f32 * 1.0_f32, OrderSide::Buy);
         println!("{:?}", fills);
 
         assert!(lob.sells.is_empty());
         assert_eq!(
             lob.buys.front(),
             Some(&LimitOrder {
-                trader: "charlie".to_string(),
+                trader_id: charlie_id,
                 price: 5_f32,
                 amount: 100,
                 nonce: 6,
@@ -279,10 +275,14 @@ mod tests {
     fn bench_1() {
         let mut lob = Market::default();
         for i in 1..=100_000_u32 {
-            black_box(lob.submit_order(&format!("bob: {}", i), 1, 1.0_f32, OrderSide::Sell));
+            black_box(assert!(lob
+                .submit_order(i, 1, 1.0_f32, OrderSide::Sell)
+                .is_ok()));
         }
         for i in 1..=100_000_u32 {
-            black_box(lob.submit_order(&format!("charlie: {}", i), 1, 1.0_f32, OrderSide::Buy));
+            black_box(assert!(lob
+                .submit_order(i, 1, 1.0_f32, OrderSide::Buy)
+                .is_ok()));
         }
     }
 
@@ -290,7 +290,7 @@ mod tests {
     fn bench_1_t() {
         use std::time::Instant;
         let mut diffs = vec![];
-        for i in 0..100 {
+        for _ in 0..100 {
             let s_0 = Instant::now();
             black_box(bench_1());
             let s_1 = Instant::now();
@@ -312,17 +312,16 @@ mod tests {
         let mut lob = Market::default();
         for i in 1_u32..=100_000 {
             let price_r = rand::thread_rng().gen_range(1..10_000);
-            black_box(lob.submit_order(&format!("bob: {}", i), 1, price_r as f32, OrderSide::Sell));
+            black_box(assert!(lob
+                .submit_order(i, 1, price_r as f32, OrderSide::Sell)
+                .is_ok()));
         }
 
         for i in 1_u32..=100_000 {
             let price_r = rand::thread_rng().gen_range(1..10_000);
-            black_box(lob.submit_order(
-                &format!("charlie: {}", i),
-                1,
-                price_r as f32,
-                OrderSide::Buy,
-            ));
+            black_box(assert!(lob
+                .submit_order(i, 1, price_r as f32, OrderSide::Buy)
+                .is_ok()));
         }
     }
 
@@ -330,7 +329,7 @@ mod tests {
     fn bench_2_t() {
         use std::time::Instant;
         let mut diffs = vec![];
-        for i in 0..100 {
+        for _ in 0..100 {
             let s_0 = Instant::now();
             black_box(bench_2());
             let s_1 = Instant::now();
